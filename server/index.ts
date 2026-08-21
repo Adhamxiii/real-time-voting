@@ -1,0 +1,98 @@
+import express from "express";
+import cors from "cors";
+import http from "http";
+import { Server } from "socket.io";
+import { Redis } from "ioredis";
+import "dotenv/config";
+
+const app = express();
+app.use(cors());
+
+const redis = new Redis(process.env.REDIS_CONNECTION_STRING!);
+const subRedis = new Redis(process.env.REDIS_CONNECTION_STRING!);
+
+const server = http.createServer(app);
+const frontendUrl = process.env.FRONTEND_URL;
+
+const io = new Server(server, {
+  cors: {
+    origin: frontendUrl,
+    methods: ["GET", "POST"],
+    credentials: true,
+  },
+});
+
+subRedis.on("message", async (channel, message) => {
+  io.to(channel).emit("room-update", message);
+});
+
+subRedis.on("error", (err) => {
+  console.error("Redis subscription error", err);
+});
+
+io.on("connection", async (socket) => {
+  const { id } = socket;
+
+  socket.on("join-room", async (room: string) => {
+    console.log("User joined room", room);
+
+    const subscribedRooms = await redis.smembers("subscribed-rooms");
+    await socket.join(room);
+    await redis.sadd(`rooms:${id}`, room);
+    await redis.hincrby("room-connections", room, 1);
+
+    if (!subscribedRooms.includes(room)) {
+      subRedis.subscribe(room, async (err) => {
+        if (err) {
+          console.error("Failed to subscribe", err);
+        } else {
+          await redis.sadd("subscribed-rooms", room);
+        }
+      });
+    }
+  });
+
+  socket.on("disconnect", async () => {
+    const { id } = socket;
+
+    const joinedRooms = await redis.smembers(`rooms:${id}`);
+    await redis.del(`rooms:${id}`);
+    joinedRooms.forEach(async (room) => {
+      const remainingConnections = await redis.hincrby(
+        "room-connections",
+        room,
+        -1
+      );
+
+      if (remainingConnections <= 0) {
+        await redis.hdel("room-connections", room);
+
+        subRedis.unsubscribe(room, async (err) => {
+          if (err) {
+            console.error("Failed to unsubscribe", err);
+          } else {
+            await redis.srem("subscribed-rooms", room);
+          }
+        });
+      }
+    });
+  });
+});
+
+const shutdown = async () => {
+  await redis.quit();
+  await subRedis.quit();
+
+  server.close(() => {
+    process.exit(0);
+  });
+};
+
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
+
+const PORT = process.env.PORT || 8080;
+
+server.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
