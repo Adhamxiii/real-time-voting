@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: real-time-voting-server
+    runtime: node
+    plan: free
+    region: oregon
+    rootDir: server
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: REDIS_CONNECTION_STRING
+        sync: false
+      - key: FRONTEND_URL
+        sync: false

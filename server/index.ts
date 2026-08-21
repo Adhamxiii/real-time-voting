@@ -8,6 +8,10 @@ import "dotenv/config";
 const app = express();
 app.use(cors());
 
+app.get("/health", (_req, res) => {
+  res.status(200).send("ok");
+});
+
 const redis = new Redis(process.env.REDIS_CONNECTION_STRING!);
 const subRedis = new Redis(process.env.REDIS_CONNECTION_STRING!);
 
@@ -91,8 +95,8 @@ const shutdown = async () => {
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
 
-const PORT = process.env.PORT || 8080;
+const PORT = Number(process.env.PORT) || 8080;
 
-server.listen(PORT, () => {
+server.listen(PORT, "0.0.0.0", () => {
   console.log(`Server is running on port ${PORT}`);
 });
